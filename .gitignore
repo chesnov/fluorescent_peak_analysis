@@ -1,0 +1,14 @@
+data/
+ImRegPOC/
+Mean_Firing_Frequency.pdf
+Mean_Firing_Frequency_by_Experiment.pdf
+noise_level_histogram.html
+Mean_Peak_to_Peak.pdf
+noise_level_histogram_by_experiment.html
+Mean_Peak_to_Peak_by_Experiment.pdf
+noise_level_histogram_by_experiment_normalized.html
+Mean_Synchrony_by_Group.pdf
+peak_heights_histogram.pdf
+Peak_Absolute_Amplitude.pdf
+Peak_Absolute_Amplitude_by_Group.pdf
+Peak_Absolute_Amplitude_by_ROI.pdf
