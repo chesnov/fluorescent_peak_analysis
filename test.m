@@ -10,13 +10,14 @@ T2 = 2250; % 下采样后2250张图像，调整为F0ds的实际第三维度
 
 %% 计算 IM - 读取图像并对齐
 IM = zeros(128, 128, T);
-video = VideoReader('B3_66.1_FOV10.avi');
+video = VideoReader('5Batch125_ApoE2_FOV10_1.avi');
 i = 0;
 prevFrame = [];
 while hasFrame(video)
     i = i + 1;
     frame = readFrame(video);
-    grayFrame = rgb2gray(frame);
+    grayFrame = frame;
+    % grayFrame = rgb2gray(frame);
     if i == 1
         % 第一帧作为基准帧
         prevFrame = grayFrame;
@@ -229,6 +230,8 @@ for comp = 1:size(Hhf,1)
     rawF(comp,:) = sum(dF(support(selpix),:),1);
     rawDFF(comp,:) = sum(dF(support(selpix),:),1)./Fzero(comp,:);
 end
+
+
 %% 信号保存
 %% Save
 A = struct();
