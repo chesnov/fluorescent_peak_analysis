@@ -298,8 +298,6 @@ def plot_noise_level_histogram(experiment_df, data_output_dir):
     fig.update_layout(title='Noise Level Distribution', xaxis_title='Noise Level', yaxis_title='Count')
     #Makee the plot dark
     fig.update_layout(template='plotly_dark')
-    #Save as html and as pdf
-    fig.write_html('noise_level_histogram.html')
 
     output_file_root = os.path.join(data_output_dir, '_noise_level_histogram')
     #Save the plot as html
