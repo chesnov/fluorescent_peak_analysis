@@ -8,6 +8,8 @@ from skimage.draw import polygon
 import seaborn as sns
 import numpy as np
 from scipy.ndimage.filters import percentile_filter
+import psutil
+import gc
 
 #load txt files as csv into numpy arrays
 import numpy as np
@@ -100,6 +102,8 @@ def load_memmap(fname_mc, bord_px):
     fname_new = cm.save_memmap(fname_mc, base_name='memmap_', order='C', border_to_0=bord_px)
     Yr, dims, T = cm.load_memmap(fname_new)
     images = Yr.T.reshape((T,) + dims, order='F')
+    del Yr
+    gc.collect()
     return images
 
 
@@ -333,16 +337,5 @@ def raw_data_to_df_f(movie_path, yaml_file, outdir, experiment_id):
         print(f"Retained {len(traces)} components")
     
     settings_dict['status_message'] = status_massage
-
-    #Clean up all temp files in caiman temp folder
-    if "CAIMAN_DATA" in os.environ: 
-        caiman_dir =  join(os.environ["CAIMAN_DATA"], 'temp')
-    else: 
-        caiman_dir = join(os.path.expanduser("~"), "caiman_data", "temp")
-    for file in os.listdir(caiman_dir):
-        file_path = join(caiman_dir, file)
-        #Delete the file
-        if os.path.isfile(file_path):
-            os.remove(file_path)
 
     return settings_dict

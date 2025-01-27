@@ -417,12 +417,24 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
         print(f'{experiment_id} has already been processed')
         return
 
-    with suppress_output():
-        try:
-            settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
-        except Exception:
-            print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
+    settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    # with suppress_output():
+    #     try:
+    #         settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    #     except Exception:
+    #         print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
 
+    #Clean up all temp files in caiman temp folder
+    if "CAIMAN_DATA" in os.environ: 
+        caiman_dir =  join(os.environ["CAIMAN_DATA"], 'temp')
+    else: 
+        caiman_dir = join(os.path.expanduser("~"), "caiman_data", "temp")
+    for file in os.listdir(caiman_dir):
+        file_path = join(caiman_dir, file)
+        #Delete the file
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            
     #Check if any ROIs were extracted
     if settings_dict['status_message']!='Successful ROI extraction':
         save_settings_to_yaml(join(experiment_outdir, experiment_id + "_settings.yaml"), settings_dict)
