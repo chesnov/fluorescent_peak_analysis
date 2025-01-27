@@ -244,9 +244,8 @@ def save_settings_to_yaml(yaml_file, settings_dict):
 
 
 # Main processing workflow
-def raw_data_to_df_f(movie_path, yaml_file, outdir):
+def raw_data_to_df_f(movie_path, yaml_file, outdir, experiment_id):
     filename = Path(movie_path).stem
-    file_base_name = filename.rsplit('_MMStack')[0]
     config = load_yaml_config(yaml_file)
     cluster, n_processes = setup_cluster()
 
@@ -299,27 +298,18 @@ def raw_data_to_df_f(movie_path, yaml_file, outdir):
 
     #Check if there is no components
     if len(cnmfe_model.estimates.C) == 0:
-        print("No components were extracted")
-        save_average_image_with_roi_contours(CI, [], pdf_save_path=join(outdir, file_base_name + "_roi_contours.pdf"))
-        return
-    retained_components, cnmfe_model = evaluate_components(cnmfe_model, images, cluster, config)
+        contours = []
+        retained_components = []
+        status_massage = 'No components were extracted'
+    else:
+        retained_components, cnmfe_model = evaluate_components(cnmfe_model, images, cluster, config)
     
-    #Check if there is no retained components
+    #Check if "retained_components" variable exists
     if len(retained_components) == 0:
-        print("No components were retained")
-        save_average_image_with_roi_contours(CI, [], pdf_save_path=join(outdir, file_base_name + "_roi_contours.pdf"))
-        return
-
-    new_mask, contours = generate_masks_and_contours(cnmfe_model.estimates.A, parameters, retained_components, config)
-    if len(contours) == 0:
-        print("No contours were extracted")
-        return
-    save_average_image_with_roi_contours(CI, contours, pdf_save_path=join(outdir, file_base_name + "_roi_contours.pdf"))
-    traces = extract_traces(images, new_mask)
-    detrend_df_f_rois(traces, outpath=join(outdir, file_base_name + "_DFF_traces.csv"))
-
-    # Stop cluster
-    cm.stop_server(dview='cluster')
+        contours = []
+        status_massage = 'No components were retained'
+    else:
+        new_mask, contours = generate_masks_and_contours(cnmfe_model.estimates.A, parameters, retained_components, config)
 
     #Create a dictionary with the settings used
     settings_dict = config
@@ -327,7 +317,32 @@ def raw_data_to_df_f(movie_path, yaml_file, outdir):
     settings_dict['retained_components'] = len(retained_components)
     settings_dict['input_movie'] = movie_path
     settings_dict['output_dir'] = outdir
-    save_settings_to_yaml(join(outdir, file_base_name + "_settings.yaml"), settings_dict)
 
-    print(f"Retained {len(traces)} components")
-    return
+    save_average_image_with_roi_contours(CI, contours, pdf_save_path=join(outdir, experiment_id + "_roi_contours.pdf"))
+
+    # Stop cluster
+    cm.stop_server(dview='cluster')
+
+    if len(contours) == 0:
+        print("No contours were extracted")
+        status_massage = 'No contours were extracted'
+    else:
+        traces = extract_traces(images, new_mask)
+        detrend_df_f_rois(traces, outpath=join(outdir, experiment_id + "_DFF_traces.csv"))
+        status_massage = 'Successful ROI extraction'
+        print(f"Retained {len(traces)} components")
+    
+    settings_dict['status_message'] = status_massage
+
+    #Clean up all temp files in caiman temp folder
+    if "CAIMAN_DATA" in os.environ: 
+        caiman_dir =  join(os.environ["CAIMAN_DATA"], 'temp')
+    else: 
+        caiman_dir = join(os.path.expanduser("~"), "caiman_data", "temp")
+    for file in os.listdir(caiman_dir):
+        file_path = join(caiman_dir, file)
+        #Delete the file
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    return settings_dict

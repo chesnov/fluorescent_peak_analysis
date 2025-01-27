@@ -4,6 +4,11 @@ from contextlib import contextmanager
 import seaborn as sns
 import numpy as np
 
+import time
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+import caiman as cm
+
 #load txt files as csv into numpy arrays
 import numpy as np
 import kaleido #required
@@ -56,6 +61,45 @@ def suppress_output():
             yield
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
+
+
+# Define the task wrapper at the module level
+def task_wrapper(target_function, *args, **kwargs):
+    return target_function(*args, **kwargs)
+
+def run_with_timeout(target_function, timeout=300, *args, **kwargs):
+    """
+    Run a function with a timeout. If it exceeds the timeout, stop the caiman server and restart the function.
+
+    Args:
+        target_function (callable): The function to execute.
+        timeout (int): The maximum time (in seconds) to allow the function to run.
+        *args: Positional arguments to pass to the target_function.
+        **kwargs: Keyword arguments to pass to the target_function.
+
+    Returns:
+        result: The result of the target function if it completes in time.
+    """
+    while True:  # Keep retrying until the function completes successfully
+        try:
+            with ProcessPoolExecutor(max_workers=1) as executor:
+                # Pass the function and its arguments to the executor
+                future = executor.submit(task_wrapper, target_function, *args, **kwargs)
+                
+                # Wait for the task to complete or timeout
+                result = future.result(timeout=timeout)
+                return result  # If successful, return the result
+
+        except multiprocessing.TimeoutError:
+            print(f"Function timed out after {timeout} seconds. Restarting...")
+            # Stop the caiman cluster
+            cm.stop_server(dview='cluster')
+            time.sleep(1)  # Optional pause before restarting
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            cm.stop_server(dview='cluster')
+            raise  # Re-raise the exception for debugging
 
             
 def load_data(file_path):
@@ -121,7 +165,7 @@ def rolling_window_smooth(signal, window_size):
     return smoothed_signal
 
 
-def precise_peak_locs(smoothed_peaks, trace, median_val):
+def precise_peak_locs(smoothed_peaks, trace):
     heights = []
     peaks = []
     for peak in smoothed_peaks:
@@ -130,8 +174,7 @@ def precise_peak_locs(smoothed_peaks, trace, median_val):
         true_peak = np.argmax(trace[peak-15:peak+15]) + peak - 15 #Due to smoothing the peak is shifted to the right
         peaks.append(true_peak)
         absolute_height = trace[true_peak]
-        real_height = absolute_height - median_val
-        heights.append([absolute_height, real_height])
+        heights.append(absolute_height)
     return peaks, heights
 
 
@@ -163,7 +206,7 @@ def peak_finder(trace):
     # prominence_threshold = 6 * mad
     width_threshold = 10 #Empirically determined
     smoothed_peaks, _ = find_peaks(smoothed_trace, height=height_threshold, prominence=prominence_threshold, width=width_threshold)
-    peaks, heights = precise_peak_locs(smoothed_peaks, trace, median_val)
+    peaks, heights = precise_peak_locs(smoothed_peaks, trace)
     
     return peaks, np.array(heights), height_threshold, smoothed_trace
 
@@ -371,11 +414,20 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
     #get the base filename withou txt extension
     experiment_id = os.path.splitext(os.path.basename(experiment_tif))[0]
 
+    #Check if this experiment has already been processed
+    if os.path.exists(join(experiment_outdir, experiment_id + '_settings.yaml')):
+        print(f'{experiment_id} has already been processed')
+        return
+
     with suppress_output():
         try:
-            raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir)
+            settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
         except Exception:
-            print(f"Exception occurred during processing of {experiment_id}")
+            print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
+
+    #Check if any ROIs were extracted
+    if settings_dict['status_message']!='Successful ROI extraction':
+        save_settings_to_yaml(join(experiment_outdir, experiment_id + "_settings.yaml"), settings_dict)
     
     #Identify csv file in outdir
     try:
@@ -387,7 +439,7 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
 
     roi_ids = list(df.columns)
 
-    experiment_df_columns = ['roi_id', 'peak_time', 'peak_absolute_amplitude', 'peak_relative_amplitude']
+    experiment_df_columns = ['roi_id', 'peak_time', 'peak_absolute_amplitude']
     experiment_df = pd.DataFrame(columns=experiment_df_columns)
 
     for roi, roi_id in enumerate(roi_ids):
@@ -395,17 +447,16 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
         peaks, peak_heights, height_threshold, smoothed_trace = peak_finder(trace)
         if len(peaks) == 0:
             peaks = [None]
-            peak_heights = np.array([[None, None]])
+            peak_heights = np.array([None])
         
         #Add peaks to experiment_df
         roi_df = pd.DataFrame(columns=experiment_df_columns)
         roi_df['roi_id'] = [roi_id for _ in range(len(peaks))]
         roi_df['peak_time'] = peaks
-        roi_df['peak_absolute_amplitude'] = peak_heights[:, 0]
-        roi_df['peak_relative_amplitude'] = peak_heights[:, 1]
+        roi_df['peak_absolute_amplitude'] = peak_heights
 
         experiment_df = pd.concat([experiment_df, roi_df], ignore_index=True)
-        plot_peaks(roi_id, trace, smoothed_trace, peaks, peak_heights[:, 0], height_threshold, experiment_outdir)
+        plot_peaks(roi_id, trace, smoothed_trace, peaks, peak_heights, height_threshold, experiment_outdir)
 
     experiment_df['noise_level'] = experiment_df['roi_id'].apply(lambda x: calc_noise_levels(array, int(x.rsplit('ROI_')[1])))
     plot_noise_level_histogram(experiment_df, experiment_outdir)
@@ -417,6 +468,9 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
     peak_to_peak_distance(experiment_df, recordings_duration, experiment_outdir, experiment_id)
 
     synchrony_calculation(experiment_df, array, experiment_outdir, experiment_id)
+
+    settings_dict['status_message'] = 'Full pipeline success'
+    save_settings_to_yaml(join(experiment_outdir, experiment_id + "_settings.yaml"), settings_dict)
 
 
 #A function that takes a dark hex color and returns a palette of n colors that go from pastel to dark
@@ -533,10 +587,10 @@ def plot_peak_amplitudes(experiments_amplitude_df, group_to_eid):
         ]
 
     #Make a new dataframe with average values for each ROI
-    experiment_avg_peak_amplitudes = experiments_amplitude_df.groupby('experiment_id').agg({'peak_absolute_amplitude': 'mean', 'peak_relative_amplitude' : 'mean' }).reset_index()
+    experiment_avg_peak_amplitudes = experiments_amplitude_df.groupby('experiment_id').agg({'peak_absolute_amplitude': 'mean'}).reset_index()
     experiment_avg_peak_amplitudes['group'] = experiment_avg_peak_amplitudes['experiment_id'].apply(lambda x: eid_to_group[x])
 
-    roi_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'roi_id']).agg({'peak_absolute_amplitude': 'mean', 'peak_relative_amplitude' : 'mean' }).reset_index()
+    roi_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'roi_id']).agg({'peak_absolute_amplitude': 'mean'}).reset_index()
     roi_avg_peak_amplitudes['group'] = roi_avg_peak_amplitudes['experiment_id'].apply(lambda x: eid_to_group[x])
 
     #Sort experiments_amplitude_df and experiment_avg_peak_amplitudes to make sure control conditions are first

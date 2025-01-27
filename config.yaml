@@ -1,0 +1,51 @@
+#Parameters for the input and output of the pipeline
+# io_params:
+#   output_folder: 
+
+#Parameters used for the CNMF-E algorithm
+cnmfe_params:
+  min_SNR: 3 #A minimum signal to noise for the fluorescent transients
+  rval_thr: 0.85 #Spatial correlation:  a minimum correlation between the shape of each component and the frames in the movie when that component is active
+  use_cnn: false #Caiman does *not* use the CNN classifier to sort neurons based on shape for 1p data: the network was trained on 2p data. Hence, we set the `use_cnn` param to `False`
+
+#Parameters used for extracting the ROI contours from the CNMF-E output
+roi_contours:
+  level: 0.4 #A threshold value. Used to dentify and extracts contours from the input image where the data crosses this value.
+  percentage_nonzero: 0.005 #A percentage of the full image this ROI occupies. Used to filter very large ROIs
+
+#Parameters for motion correction
+motion_corr:
+  fr: 1000 #Frame rate of the video
+  decay_time: 0.002 #How quickly (in seconds) the fluorescent indicator peak decays
+  pw_rigid: false #flag for performing piecewise-rigid motion correction (otherwise just rigid)
+  max_shifts: 5 #maximum allowed rigid shift
+  gSig_filt: 3 #sigma for high pass spatial filter applied before motion correction, used in 1p data
+  strides: 48 #start a new patch for pw-rigid motion correction every x pixels
+  overlaps: 24 #overlap between patches (size of patch = strides + overlaps)
+  max_deviation_rigid: 3 #maximum deviation allowed for patch with respect to rigid shifts
+  border_nan: copy #replicate values along the boundaries
+
+#Parameters for CNMF-E source extraction and deconvolution
+src_extr_deconv:
+  method_init: corr_pnr               # use this for 1 photon
+  p: 1                                # order of the autoregressive system
+  K: null                             # upper bound on number of components per patch, in general None for CNMFE
+  gSig: 2                             # expected half-width of neurons in pixels 
+  merge_thr: 0.9                      # merging threshold, max correlation allowed
+  rf:  40                             # half-size of the patches in pixels. e.g., if rf=40, patches are 80x80
+  stride: 20                          # amount of overlap between the patches in pixels 
+  only_init: true                     # set it to True to run CNMF-E
+  tsub: 1                             # downsampling factor in time for initialization, increase if you have memory problems
+  ssub: 1                             # downsampling factor in space for initialization, increase if you have memory problems
+  nb: 0                               # number of background components (rank) if positive, set to 0 for CNMFE
+  low_rank_background: null           # None leaves background of each patch intact (use True if gnb>0)
+  update_background_components: true  # sometimes setting to False improve the results
+  nb_patch: 0                         # number of background components (rank) per patch (0 for CNMFE)
+  method_deconvolution: oasis         # could use 'cvxpy' alternatively
+  min_corr: 0.4                       # min peak value from correlation image
+  min_pnr: 8                          # min peak to noise ration from PNR image
+  normalize_init: false               # just leave as is
+  center_psf: true                    # True for 1p
+  ssub_B: 1                           # additional downsampling factor in space for background (increase to 2 if slow)
+  ring_size_factor: 0.5               # radius of ring is gSiz*ring_size_factor
+  del_duplicates: true                # whether to remove duplicates from initialization
