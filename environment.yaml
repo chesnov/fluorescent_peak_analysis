@@ -4,6 +4,7 @@ channels:
   - conda-forge
 dependencies:
   - caiman
+  - pip
   - pip:
     - aiohttp
     - av

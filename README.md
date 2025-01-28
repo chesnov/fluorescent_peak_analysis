@@ -1,7 +1,7 @@
 # fluorescent_peak_analysis
 
 ## Installation: 
-`conda env create -n caiman --file environment.yml`
+`conda env create -n caiman --file environment.yaml`
 
 `conda activate caiman`
 

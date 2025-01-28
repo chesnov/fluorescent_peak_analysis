@@ -110,7 +110,11 @@ def load_memmap(fname_mc, bord_px):
 # Function to extract ROIs using CNMF-E
 def extract_rois(images, cluster, parameters, n_processes):
     cnmfe_model = cnmf.CNMF(n_processes=n_processes, dview=cluster, params=parameters);
-    cnmfe_model.fit(images);
+    try:
+        cnmfe_model.fit(images);
+    except Exception as e:
+        print(f"Error during CNMF-E fitting: {e}")
+        cnmfe_model = None
     return cnmfe_model
 
 
@@ -297,11 +301,20 @@ def raw_data_to_df_f(movie_path, yaml_file, outdir, experiment_id):
 
     cnmfe_model = extract_rois(images, cluster, parameters, n_processes);
 
-    # Visualize results
-    CI = cm.local_correlations(images.transpose(1, 2, 0))
+    #Check if cnmfe_model is None
+    if cnmfe_model is None:
+        print("No components were extracted")
+        status_massage = 'No components were extracted'
+        C_var = []
+        #Define CI as the first image in the movie
+        CI = images[0]
+    else:
+        C_var = cnmfe_model.estimates.C
+        # Visualize results
+        CI = cm.local_correlations(images.transpose(1, 2, 0))
 
     #Check if there is no components
-    if len(cnmfe_model.estimates.C) == 0:
+    if len(C_var) == 0:
         contours = []
         retained_components = []
         status_massage = 'No components were extracted'
