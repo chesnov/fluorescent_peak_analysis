@@ -1,8 +1,6 @@
 import numpy as np
 import sys
 from contextlib import contextmanager
-import seaborn as sns
-import numpy as np
 
 import time
 import multiprocessing
@@ -10,14 +8,12 @@ from concurrent.futures import ProcessPoolExecutor
 import caiman as cm
 
 #load txt files as csv into numpy arrays
-import numpy as np
 import kaleido #required
 kaleido.__version__ #0.2.1
 
 import plotly
 plotly.__version__ #5.5.0
 
-#now this works:
 import plotly.graph_objects as go
 from scipy.signal import find_peaks
 import os
@@ -25,31 +21,16 @@ from os.path import isdir, join
 from os import listdir
 import pandas as pd
 
-import seaborn as sns
-import matplotlib.pyplot as plt
-import colorsys
-
-#Import pingouin
-import pingouin as pg
-
 import cv2
-import matplotlib.pyplot as plt
-import numpy as np
 
 try:
     cv2.setNumThreads(0)
 except():
     pass
 
-import cv2
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-
+from utils.analyze_data import *
 from utils.caiman_wrapper import *
 
-
-pipeline_version = '0.1.0'
 
 @contextmanager
 def suppress_output():
@@ -417,12 +398,12 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
         print(f'{experiment_id} has already been processed')
         return
 
-    settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
-    # with suppress_output():
-    #     try:
-    #         settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
-    #     except Exception:
-    #         print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
+    # settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    with suppress_output():
+        try:
+            settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
+        except Exception:
+            print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
 
     #Clean up all temp files in caiman temp folder
     if "CAIMAN_DATA" in os.environ: 
@@ -483,351 +464,8 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
     save_settings_to_yaml(join(experiment_outdir, experiment_id + "_settings.yaml"), settings_dict)
 
 
-#A function that takes a dark hex color and returns a palette of n colors that go from pastel to dark
-def generate_palette(dark_hex: str, n: int) -> list:
-    """
-    Generate a palette of `n` colors transitioning from pastel to the given dark color.
-    
-    Parameters:
-        dark_hex (str): A dark hex color (e.g., '#123456').
-        n (int): Number of colors in the palette.
-        
-    Returns:
-        list: A list of `n` hex color strings.
-    """
-    def hex_to_rgb(hex_color: str) -> tuple:
-        """Convert a hex color string to an RGB tuple."""
-        hex_color = hex_color.lstrip("#")
-        return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-    
-    def rgb_to_hex(rgb: tuple) -> str:
-        """Convert an RGB tuple to a hex color string."""
-        return "#{:02x}{:02x}{:02x}".format(
-            int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
-        )
-    
-    # Convert dark hex color to RGB and then to HLS
-    dark_rgb = hex_to_rgb(dark_hex)
-    dark_hls = colorsys.rgb_to_hls(*dark_rgb)
-    
-    # Generate pastel color by increasing lightness
-    pastel_hls = (dark_hls[0], min(dark_hls[1] + 0.5, 1.0), dark_hls[2])
-    pastel_rgb = colorsys.hls_to_rgb(*pastel_hls)
-    
-    # Interpolate between pastel and dark colors
-    palette = []
-    for i in range(n):
-        t = i / (n - 1) if n > 1 else 0  # Avoid division by zero
-        interpolated_hls = (
-            dark_hls[0],  # Keep hue the same
-            pastel_hls[1] * (1 - t) + dark_hls[1] * t,  # Interpolate lightness
-            pastel_hls[2] * (1 - t) + dark_hls[2] * t   # Interpolate saturation
-        )
-        interpolated_rgb = colorsys.hls_to_rgb(*interpolated_hls)
-        palette.append(rgb_to_hex(interpolated_rgb))
-    
-    return palette
-
-
-def plot_peak_amplitudes(experiments_amplitude_df, group_to_eid):
-    experiments_amplitude_df = experiments_amplitude_df.copy(deep=True)
-    color_options = ['#00312F', '#1D2D46', '#46000D', '#5F3920']
-    groups = list(group_to_eid.keys())
-    group_palette = {}
-    experiment_palette = {}
-    for i, gr in enumerate(groups):
-        eids = group_to_eid[gr]
-        pastel_palette_arr = generate_palette(color_options[i], len(eids) + 1)
-        group_palette[gr] = pastel_palette_arr[0]
-        group_dict = {e : pastel_palette_arr[j + 1] for j, e in enumerate(eids)}
-        #concatenate group_palette and group_dict
-        experiment_palette.update(group_dict)
-
-    # Remove entries with experiment id not among eids in the dictionary
-    legal_eids = list(group_to_eid.values())
-    #Make a flat list
-    legal_eids = [item for sublist in legal_eids for item in sublist]
-
-    #Remove all experiments that are not among legal eids
-    experiments_amplitude_df = experiments_amplitude_df[experiments_amplitude_df['experiment_id'].isin(legal_eids)]
-
-    eid_to_group = {eid : group for group, eids in group_to_eid.items() for eid in eids}
-
-    #Add a group column to the dataframe
-    experiments_amplitude_df['group'] = experiments_amplitude_df['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    # Remove ROIS that are beyond 2 stds from noise mean
-    mean_noise = experiments_amplitude_df['noise_level'].mean()
-    std_noise = experiments_amplitude_df['noise_level'].std()
-    #Get a number of unique experiment id and roi pairs before filtering
-    num_rois_before_filtering = experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.nunique()
-    min_noise_thresh = mean_noise - 0.5 * std_noise
-    max_noise_thresh = mean_noise + 0.5 * std_noise
-
-    #Create a dataframe with ROIs that need to be removed due to high noise and associated experiment
-    rois_to_remove = experiments_amplitude_df.copy(deep=True)
-    rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh) | (rois_to_remove['noise_level'] < min_noise_thresh)]
-    rois_to_remove = rois_to_remove.drop_duplicates()
-    rois_to_remove = rois_to_remove[['experiment_id', 'roi_id']]
-
-    #Remove rois that match rois_to_remove from experiments_amplitude_df
-    experiments_amplitude_df = experiments_amplitude_df[
-        ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
-        )
-    ]
-
-    num_rois_after_filtering = experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.nunique()
-    print(f"Keeping {num_rois_after_filtering} ROIs out of {num_rois_before_filtering}")
-    print(f"Noise cutoffs are {min_noise_thresh} and {max_noise_thresh}")
-
-    #For each experiment, check if it still has at least 3 different ROIs
-    experiments_with_enough_rois = experiments_amplitude_df.groupby('experiment_id').filter(lambda x: x['roi_id'].nunique() >= 3)
-    #Get a list of experiments that have less than 3 ROIs
-    experiments_with_few_rois = experiments_amplitude_df[~experiments_amplitude_df['experiment_id'].isin(experiments_with_enough_rois['experiment_id'].unique())]
-    if len(experiments_with_few_rois) > 0:
-        print(f"Experiments with less than 3 ROIs: {experiments_with_few_rois['experiment_id'].unique()}")
-        #If an experiment has less than 3 ROIs, remove it from the dataframe
-        #Add these experiments and associated ROIs to rois_to_remove
-        rois_to_remove = pd.concat([rois_to_remove, experiments_with_few_rois[['experiment_id', 'roi_id']]], ignore_index=True)
-        experiments_amplitude_df = experiments_amplitude_df[
-            ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.isin(
-                rois_to_remove.set_index(['experiment_id', 'roi_id']).index
-            )
-        ]
-
-    #Make a new dataframe with average values for each ROI
-    experiment_avg_peak_amplitudes = experiments_amplitude_df.groupby('experiment_id').agg({'peak_absolute_amplitude': 'mean'}).reset_index()
-    experiment_avg_peak_amplitudes['group'] = experiment_avg_peak_amplitudes['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    roi_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'roi_id']).agg({'peak_absolute_amplitude': 'mean'}).reset_index()
-    roi_avg_peak_amplitudes['group'] = roi_avg_peak_amplitudes['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    #Sort experiments_amplitude_df and experiment_avg_peak_amplitudes to make sure control conditions are first
-    experiments_amplitude_df = experiments_amplitude_df.sort_values(['group', 'experiment_id'], ascending=False)
-    experiment_avg_peak_amplitudes = experiment_avg_peak_amplitudes.sort_values(['group', 'experiment_id'], ascending=False)
-    roi_avg_peak_amplitudes = roi_avg_peak_amplitudes.sort_values(['group', 'experiment_id'], ascending=False)
-
-    #Use pingouin to run ANOVA on plot_peak_amplitudes to check if there are significant differences between groups
-    aov = pg.anova(data=experiment_avg_peak_amplitudes, dv='peak_absolute_amplitude', between='group', detailed=True)
-    print(aov)
-
-    # Create the plot
-    plt.figure(figsize=(len(groups), 4))
-    #Make the plot dark
-    plt.style.use('dark_background')
-    # Boxplot with group colors
-    sns.boxplot(data=experiment_avg_peak_amplitudes, x='group', y='peak_absolute_amplitude', palette=group_palette)
-    # Swarmplot with experiment_id colors
-    sns.swarmplot(data=experiment_avg_peak_amplitudes, x='group', y='peak_absolute_amplitude', hue='experiment_id', palette=experiment_palette)
-    # Adjust legend
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    # Labels and title
-    plt.xlabel('Group')
-    plt.ylabel('Peak Absolute Amplitude')
-    plt.title('Peak Absolute Amplitude by Group (average per experiment)')
-    #If there are more than 2 groups, hide legend
-    if len(groups) > 2:
-        plt.legend().remove()
-    # Layout and save as PDF
-    plt.tight_layout()
-    plt.savefig('Peak_Absolute_Amplitude_by_Group.pdf', format='pdf')
-    plt.show()
-
-
-    #Use seaborn to plot a violin plot of the peak relative amplitudes
-    plt.figure(figsize=(len(groups), 6))
-    sns.violinplot(data=roi_avg_peak_amplitudes, x='group', y='peak_absolute_amplitude', palette=group_palette)
-    #Add swarmplot
-    if len(groups) <= 2:
-        sns.swarmplot(data=roi_avg_peak_amplitudes, x='group', y='peak_absolute_amplitude', hue='experiment_id', palette=experiment_palette)
-    #put legend outside the plot
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    plt.xlabel('Group')
-    plt.ylabel('Peak Absolute Amplitude')
-    plt.title('Peak Absolute Amplitude by Group (average per ROI)')
-    #If there are more than 2 groups, hide legend
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Peak_Absolute_Amplitude_by_ROI.pdf', format='pdf')
-    plt.show()
-
-    #Use seaborn to plot a violin plot of the peak relative amplitudes
-    plt.figure(figsize=(len(groups), 4))
-    sns.violinplot(data=experiments_amplitude_df, x='group', y='peak_absolute_amplitude', palette=group_palette)
-    #Add swarmplot
-    # sns.swarmplot(data=experiments_amplitude_df, x='group', y='peak_absolute_amplitude', hue='experiment_id')
-    plt.xlabel('Group')
-    plt.ylabel('Peak Absolute Amplitude')
-    plt.title('Peak Absolute Amplitude by Group')
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Peak_Absolute_Amplitude.pdf', format='pdf')
-    plt.show()
-
-    return rois_to_remove, group_palette, experiment_palette, experiment_avg_peak_amplitudes
-
-
-def plot_frequencies(experiments_frequency_df, group_to_eid, rois_to_remove, group_palette, experiment_palette):
-    experiments_frequency_df = experiments_frequency_df.copy(deep=True)
-    groups = list(group_to_eid.keys())
-    # Remove entries with experiment id not among eids in the dictionary
-    legal_eids = list(group_to_eid.values())
-    #Make a flat list
-    legal_eids = [item for sublist in legal_eids for item in sublist]
-
-    #Remove all experiments that are not among legal eids
-    experiments_frequency_df = experiments_frequency_df[experiments_frequency_df['experiment_id'].isin(legal_eids)]
-
-    eid_to_group = {eid : group for group, eids in group_to_eid.items() for eid in eids}
-    
-    experiments_frequency_df['group'] = experiments_frequency_df['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    # Remove ROIS that are beyond 2 stds from noise mean
-
-    #Remove rois that match rois_to_remove from experiments_frequency_df
-    experiments_frequency_df = experiments_frequency_df[
-        ~experiments_frequency_df.set_index(['experiment_id', 'roi_id']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
-        )
-    ]
-
-    #Make a new dataframe with average values for each experiment
-    experiment_avg_firing_frequency = experiments_frequency_df.groupby('experiment_id').agg({'mean_firing_frequency[Hz]': 'mean', 'mean_peak_to_peak_distance[ms]' : 'mean'}).reset_index()
-    experiment_avg_firing_frequency['group'] = experiment_avg_firing_frequency['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    #Sort experiment_avg_firing_frequency and experiments_frequency_df to make sure control conditions are first
-    experiment_avg_firing_frequency = experiment_avg_firing_frequency.sort_values(['group', 'experiment_id'], ascending=False)
-    experiments_frequency_df = experiments_frequency_df.sort_values(['group', 'experiment_id'], ascending=False)
-
-    #Use pingouin to run ANOVA on experiment_avg_firing_frequency to check if there are significant differences between groups
-    aov = pg.anova(data=experiment_avg_firing_frequency, dv='mean_firing_frequency[Hz]', between='group', detailed=True)
-    print(aov)
-
-    #Use seaborn to plot a boxplot of the peak absolute amplitudes
-    plt.figure(figsize=(len(groups), 4))
-    sns.boxplot(data=experiment_avg_firing_frequency, x='group', y='mean_firing_frequency[Hz]', palette=group_palette)
-    #Add swarmplot
-    sns.swarmplot(data=experiment_avg_firing_frequency, x='group', y='mean_firing_frequency[Hz]', hue='experiment_id', palette=experiment_palette)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    plt.xlabel('Experiment ID')
-    plt.ylabel('Mean Firing Frequency [Hz]')
-    plt.title('Mean Firing Frequency by Experiment')
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Mean_Firing_Frequency_by_Experiment.pdf', format='pdf')
-    plt.show()
-
-    #Use seaborn to plot a boxplot of the peak absolute amplitudes
-    plt.figure(figsize=(len(groups), 4))
-    sns.boxplot(data=experiment_avg_firing_frequency, x='group', y='mean_peak_to_peak_distance[ms]', palette=group_palette)
-    #Add swarmplot
-    sns.swarmplot(data=experiment_avg_firing_frequency, x='group', y='mean_peak_to_peak_distance[ms]', hue='experiment_id', palette=experiment_palette)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    plt.xlabel('Experiment ID')
-    plt.ylabel('Mean peak to peak distance [ms]')
-    plt.title('Mean Firing Frequency by Experiment')
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Mean_Peak_to_Peak_by_Experiment.pdf', format='pdf')
-    plt.show()
-
-    #Use seaborn to plot a violin plot of the firing frequency with individual ROIs
-    plt.figure(figsize=(len(groups), 4))
-    sns.violinplot(data=experiments_frequency_df, x='group', y='mean_firing_frequency[Hz]', palette=group_palette)
-    #Add swarmplot
-    # sns.swarmplot(data=experiments_frequency_df, x='group', y='mean_firing_frequency[Hz]', hue='experiment_id', palette=experiment_palette)
-    #put legend outside the plot
-    plt.xlabel('Group')
-    plt.ylabel('Mean Firing Frequency [Hz]')
-    plt.title('Mean Firing Frequency by Group')
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Mean_Firing_Frequency.pdf', format='pdf')
-    plt.show()
-
-    #Use seaborn to plot a violin plot of the firing frequency with individual ROIs
-    plt.figure(figsize=(4, 4))
-    sns.violinplot(data=experiments_frequency_df, x='group', y='mean_peak_to_peak_distance[ms]', palette=group_palette)
-    #Add swarmplot
-    # sns.swarmplot(data=experiments_frequency_df, x='group', y='mean_firing_frequency[Hz]', hue='experiment_id', palette=experiment_palette)
-    #put legend outside the plot
-    plt.xlabel('Group')
-    plt.ylabel('Mean peak to peak distance [ms]')
-    plt.title('Mean Firing Frequency by Group')
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Mean_Peak_to_Peak.pdf', format='pdf')
-    plt.show()
-
-    return experiment_avg_firing_frequency
-
-def plot_synchronie(experimets_synchrony_df, group_to_eid, rois_to_remove, group_palette, experiment_palette):
-    experimets_synchrony_df = experimets_synchrony_df.copy(deep=True)
-    groups = list(group_to_eid.keys())
-    # Remove entries with experiment id not among eids in the dictionary
-    legal_eids = list(group_to_eid.values())
-    #Make a flat list
-    legal_eids = [item for sublist in legal_eids for item in sublist]
-
-    #Remove all experiments that are not among legal eids
-    experimets_synchrony_df = experimets_synchrony_df[experimets_synchrony_df['experiment_id'].isin(legal_eids)]
-
-    eid_to_group = {eid : group for group, eids in group_to_eid.items() for eid in eids}
-
-    experimets_synchrony_df['group'] = experimets_synchrony_df['experiment_id'].apply(lambda x: eid_to_group[x])
-
-    #If either of the ROIs is in the list of ROIs to remove, remove the row
-    experimets_synchrony_df = experimets_synchrony_df[
-        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_a']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
-        )
-    ]
-    experimets_synchrony_df = experimets_synchrony_df[
-        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_b']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
-        )
-    ]
-
-    #Calculate mean synchrony for each experiment
-    mean_synchrony_df = experimets_synchrony_df.groupby(['experiment_id', 'group']).agg({'synchrony': 'mean'}).reset_index()
-
-    #sort the dataframe by group
-    mean_synchrony_df = mean_synchrony_df.sort_values(['group', 'experiment_id'], ascending=False)
-
-    #Use pingouin to run ANOVA on mean_synchrony_df to check if there are significant differences between groups
-    aov = pg.anova(data=mean_synchrony_df, dv='synchrony', between='group', detailed=True)
-    print(aov)
-
-    #Use seaborn to plot a boxplot of the synchrony
-    plt.figure(figsize=(4, 4))
-    sns.boxplot(data=mean_synchrony_df, x='group', y='synchrony', palette=group_palette)
-    #Add swarmplot
-    sns.swarmplot(data=mean_synchrony_df, x='group', y='synchrony', hue='experiment_id', palette=experiment_palette)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    plt.xlabel('Group')
-    plt.ylabel('Mean Synchrony')
-    plt.title('Mean Synchrony by Group')
-    if len(groups) > 2:
-        plt.legend().remove()
-    plt.tight_layout()
-    #Seve as pdf
-    plt.savefig('Mean_Synchrony_by_Group.pdf', format='pdf')
-    plt.show()
-    return mean_synchrony_df
-
-
 def process_dataset(input_dir, output_dir):
+    set_seed()
     #Get all the folders in the input directory
     conditions = [f for f in listdir(input_dir) if isdir(join(input_dir, f))]
 
@@ -852,3 +490,10 @@ def process_dataset(input_dir, output_dir):
                 os.makedirs(experiment_output_dir)
             #Run the fulll pipeline
             full_pipeline(join(experiment_dir, tif_file), experiment_output_dir, yaml_file)
+
+    #Analyse all the processed data
+    experiments_amplitude_df, experiments_frequency_df, experimets_synchrony_df = aggregate_data(output_dir)
+
+    rois_to_remove, group_palette, experiment_palette, experiment_avg_peak_amplitudes = plot_peak_amplitudes(experiments_amplitude_df, output_dir)
+    experiment_avg_firing_frequency = plot_frequencies(experiments_frequency_df, rois_to_remove, group_palette, experiment_palette, output_dir)
+    mean_synchrony_df = plot_synchrony(experimets_synchrony_df, rois_to_remove, group_palette, experiment_palette, output_dir)

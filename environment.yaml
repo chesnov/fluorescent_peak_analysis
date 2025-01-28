@@ -1,4 +1,4 @@
-name: caiman
+name: caiman_env
 channels:
   - bioconda
   - conda-forge

@@ -8,7 +8,7 @@ from skimage.draw import polygon
 import seaborn as sns
 import numpy as np
 from scipy.ndimage.filters import percentile_filter
-import psutil
+import random
 import gc
 
 #load txt files as csv into numpy arrays
@@ -51,6 +51,8 @@ from caiman.source_extraction import cnmf
 from caiman.motion_correction import MotionCorrect
 from caiman.source_extraction.cnmf import params as params
 
+pipeline_version = '0.1.0'
+
 try:
     if __IPYTHON__:
         get_ipython().run_line_magic('load_ext', 'autoreload')
@@ -64,18 +66,37 @@ try:
 except:
     pass
 
+#Set pseudorandom number generator at a fixed value
+
+
 bpl.output_notebook()
 hv.notebook_extension('bokeh')
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
-pipeline_version = '0.1.0'
-
 def load_yaml_config(yaml_file):
     with open(yaml_file, "r") as file:
         config = yaml.safe_load(file)
     return config
+
+
+def set_seed():
+    """Set seed for all relevant pseudorandom number generators."""
+    seed = 42
+    random.seed(seed)            # For Python's random module
+    np.random.seed(seed)         # For NumPy
+    try:
+        import torch
+        torch.manual_seed(seed)  # For PyTorch (if applicable)
+        torch.cuda.manual_seed_all(seed)  # For CUDA (if using GPUs with PyTorch)
+    except ImportError:
+        pass
+    try:
+        import tensorflow as tf
+        tf.random.set_seed(seed)  # For TensorFlow (if applicable)
+    except ImportError:
+        pass
 
 
 # Function to set up a cluster for parallel processing
@@ -253,6 +274,7 @@ def save_settings_to_yaml(yaml_file, settings_dict):
 
 # Main processing workflow
 def raw_data_to_df_f(movie_path, yaml_file, outdir, experiment_id):
+    set_seed()
     filename = Path(movie_path).stem
     config = load_yaml_config(yaml_file)
     cluster, n_processes = setup_cluster()
