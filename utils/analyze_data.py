@@ -60,7 +60,7 @@ def generate_palette(dark_hex: str, n: int) -> list:
 
 def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
     experiments_amplitude_df = experiments_amplitude_df.copy(deep=True)
-    color_options = ['#00312F', '#1D2D46', '#46000D', '#5F3920']
+    color_options = ['#00312F', '#1D2D46', '#46000D', '#5F3920', '#573844', '#424313']
     groups = list(experiments_amplitude_df['condition'].unique())
     group_palette = {}
     experiment_palette = {}
@@ -68,7 +68,7 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
         eids = experiments_amplitude_df.loc[experiments_amplitude_df['condition'] == gr, 'experiment_id'].unique()
         pastel_palette_arr = generate_palette(color_options[i], len(eids) + 1)
         group_palette[gr] = pastel_palette_arr[0]
-        group_dict = {e : pastel_palette_arr[j + 1] for j, e in enumerate(eids)}
+        group_dict = {gr + e : pastel_palette_arr[j + 1] for j, e in enumerate(eids)}
         #concatenate group_palette and group_dict
         experiment_palette.update(group_dict)
 
@@ -81,40 +81,53 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
     max_noise_thresh = mean_noise + 0.5 * std_noise
 
     #Create a dataframe with ROIs that need to be removed due to high noise and associated experiment
+    original_conditions = experiments_amplitude_df[['experiment_id', 'roi_id', 'condition']].drop_duplicates()
     rois_to_remove = experiments_amplitude_df.copy(deep=True)
+
     rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh) | (rois_to_remove['noise_level'] < min_noise_thresh)]
+    #Remove silent ROIs (no detectable peaks found)
+    rois_to_remove = pd.concat([rois_to_remove, experiments_amplitude_df[experiments_amplitude_df['peak_absolute_amplitude'].isna()]])
+    rois_to_remove = rois_to_remove[['experiment_id', 'roi_id', 'condition']]
     rois_to_remove = rois_to_remove.drop_duplicates()
-    rois_to_remove = rois_to_remove[['experiment_id', 'roi_id']]
+    
 
     #Remove rois that match rois_to_remove from experiments_amplitude_df
     experiments_amplitude_df = experiments_amplitude_df[
-        ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
+        ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
+            rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
         )
-    ]
+    ].reset_index()
 
     num_rois_after_filtering = experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.nunique()
     print(f"Keeping {num_rois_after_filtering} ROIs out of {num_rois_before_filtering}")
     print(f"Noise cutoffs are {min_noise_thresh} and {max_noise_thresh}")
 
     #For each experiment, check if it still has at least 3 different ROIs
-    experiments_with_enough_rois = experiments_amplitude_df.groupby('experiment_id').filter(lambda x: x['roi_id'].nunique() >= 3)
+    experiments_with_enough_rois = experiments_amplitude_df.groupby(['experiment_id', 'condition']).filter(lambda x: x['roi_id'].nunique() >= 3)
     #Get a list of experiments that have less than 3 ROIs
     experiments_with_few_rois = experiments_amplitude_df[~experiments_amplitude_df['experiment_id'].isin(experiments_with_enough_rois['experiment_id'].unique())]
     if len(experiments_with_few_rois) > 0:
         print(f"Experiments with less than 3 ROIs: {experiments_with_few_rois['experiment_id'].unique()}")
         #If an experiment has less than 3 ROIs, remove it from the dataframe
         #Add these experiments and associated ROIs to rois_to_remove
-        rois_to_remove = pd.concat([rois_to_remove, experiments_with_few_rois[['experiment_id', 'roi_id']]], ignore_index=True)
+        rois_to_remove = pd.concat([rois_to_remove, experiments_with_few_rois[['experiment_id', 'roi_id', 'condition']]], ignore_index=True)
         experiments_amplitude_df = experiments_amplitude_df[
-            ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.isin(
-                rois_to_remove.set_index(['experiment_id', 'roi_id']).index
+            ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
+                rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
             )
         ]
+    retained_conditions = experiments_amplitude_df[['experiment_id', 'roi_id', 'condition']].drop_duplicates()
+    removed_conditions = original_conditions[
+            ~original_conditions.set_index(['experiment_id', 'condition']).index.isin(
+                retained_conditions.set_index(['experiment_id', 'condition']).index
+            )
+        ]
+    removed_conditions['agg_condition'] = removed_conditions['experiment_id'] + removed_conditions['condition']
+    print(f"Removed the following experiments completely: {removed_conditions['agg_condition'].unique()}")
 
     #Make a new dataframe with average values for each ROI
-    experiment_avg_peak_amplitudes = experiments_amplitude_df.groupby('experiment_id').agg({'peak_absolute_amplitude': 'mean', 'condition' : 'first'}).reset_index()
-    roi_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'roi_id']).agg({'peak_absolute_amplitude': 'mean', 'condition' : 'first'}).reset_index()
+    experiment_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'condition']).agg({'peak_absolute_amplitude': 'mean'}).reset_index()
+    roi_avg_peak_amplitudes = experiments_amplitude_df.groupby(['experiment_id', 'roi_id', 'condition']).agg({'peak_absolute_amplitude': 'mean'}).reset_index()
 
     #Sort experiments_amplitude_df and experiment_avg_peak_amplitudes to make sure control conditions are first
     experiments_amplitude_df = experiments_amplitude_df.sort_values(['condition', 'experiment_id'], ascending=False)
@@ -146,7 +159,8 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
     # Boxplot with group colors
     sns.boxplot(data=experiment_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', palette=group_palette)
     # Swarmplot with experiment_id colors
-    sns.swarmplot(data=experiment_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', hue='experiment_id', palette=experiment_palette)
+    experiment_avg_peak_amplitudes['condition_experiment_id'] = experiment_avg_peak_amplitudes['condition'] + experiment_avg_peak_amplitudes['experiment_id']
+    sns.swarmplot(data=experiment_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', hue='condition_experiment_id', palette=experiment_palette)
     # Adjust legend
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     # Labels and title
@@ -165,7 +179,8 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
     sns.violinplot(data=roi_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', palette=group_palette)
     #Add swarmplot
     if len(groups) <= 2:
-        sns.swarmplot(data=roi_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', hue='experiment_id', palette=experiment_palette)
+        roi_avg_peak_amplitudes['condition_experiment_id'] = roi_avg_peak_amplitudes['condition'] + roi_avg_peak_amplitudes['experiment_id']
+        sns.swarmplot(data=roi_avg_peak_amplitudes, x='condition', y='peak_absolute_amplitude', hue='condition_experiment_id', palette=experiment_palette)
     #put legend outside the plot
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     plt.xlabel('Group')
@@ -205,13 +220,13 @@ def plot_frequencies(experiments_frequency_df, rois_to_remove, group_palette, ex
 
     #Remove rois that match rois_to_remove from experiments_frequency_df
     experiments_frequency_df = experiments_frequency_df[
-        ~experiments_frequency_df.set_index(['experiment_id', 'roi_id']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
+        ~experiments_frequency_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
+            rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
         )
     ]
 
     #Make a new dataframe with average values for each experiment
-    experiment_avg_firing_frequency = experiments_frequency_df.groupby('experiment_id').agg({'mean_firing_frequency[Hz]': 'mean', 'mean_peak_to_peak_distance[ms]' : 'mean', 'condition' : 'first'}).reset_index()
+    experiment_avg_firing_frequency = experiments_frequency_df.groupby(['experiment_id', 'condition']).agg({'mean_firing_frequency[Hz]': 'mean', 'mean_peak_to_peak_distance[ms]' : 'mean'}).reset_index()
 
     #Sort experiment_avg_firing_frequency and experiments_frequency_df to make sure control conditions are first
     experiment_avg_firing_frequency = experiment_avg_firing_frequency.sort_values(['condition', 'experiment_id'], ascending=False)
@@ -238,7 +253,8 @@ def plot_frequencies(experiments_frequency_df, rois_to_remove, group_palette, ex
     plt.figure(figsize=(len(groups), 4))
     sns.boxplot(data=experiment_avg_firing_frequency, x='condition', y='mean_firing_frequency[Hz]', palette=group_palette)
     #Add swarmplot
-    sns.swarmplot(data=experiment_avg_firing_frequency, x='condition', y='mean_firing_frequency[Hz]', hue='experiment_id', palette=experiment_palette)
+    experiment_avg_firing_frequency['condition_experiment_id'] = experiment_avg_firing_frequency['condition'] + experiment_avg_firing_frequency['experiment_id']
+    sns.swarmplot(data=experiment_avg_firing_frequency, x='condition', y='mean_firing_frequency[Hz]', hue='condition_experiment_id', palette=experiment_palette)
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     plt.xlabel('Experiment ID')
     plt.ylabel('Mean Firing Frequency [Hz]')
@@ -253,7 +269,7 @@ def plot_frequencies(experiments_frequency_df, rois_to_remove, group_palette, ex
     plt.figure(figsize=(len(groups), 4))
     sns.boxplot(data=experiment_avg_firing_frequency, x='condition', y='mean_peak_to_peak_distance[ms]', palette=group_palette)
     #Add swarmplot
-    sns.swarmplot(data=experiment_avg_firing_frequency, x='condition', y='mean_peak_to_peak_distance[ms]', hue='experiment_id', palette=experiment_palette)
+    sns.swarmplot(data=experiment_avg_firing_frequency, x='condition', y='mean_peak_to_peak_distance[ms]', hue='condition_experiment_id', palette=experiment_palette)
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     plt.xlabel('Experiment ID')
     plt.ylabel('Mean peak to peak distance [ms]')
@@ -307,13 +323,13 @@ def plot_synchrony(experimets_synchrony_df, rois_to_remove, group_palette, exper
 
     #If either of the ROIs is in the list of ROIs to remove, remove the row
     experimets_synchrony_df = experimets_synchrony_df[
-        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_a']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
+        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_a', 'condition']).index.isin(
+            rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
         )
     ]
     experimets_synchrony_df = experimets_synchrony_df[
-        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_b']).index.isin(
-            rois_to_remove.set_index(['experiment_id', 'roi_id']).index
+        ~experimets_synchrony_df.set_index(['experiment_id', 'ROI_b', 'condition']).index.isin(
+            rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
         )
     ]
 
@@ -344,7 +360,8 @@ def plot_synchrony(experimets_synchrony_df, rois_to_remove, group_palette, exper
     plt.figure(figsize=(4, 4))
     sns.boxplot(data=mean_synchrony_df, x='condition', y='synchrony', palette=group_palette)
     #Add swarmplot
-    sns.swarmplot(data=mean_synchrony_df, x='condition', y='synchrony', hue='experiment_id', palette=experiment_palette)
+    mean_synchrony_df['condition_experiment_id'] = mean_synchrony_df['condition'] + mean_synchrony_df['experiment_id']
+    sns.swarmplot(data=mean_synchrony_df, x='condition', y='synchrony', hue='condition_experiment_id', palette=experiment_palette)
     plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     plt.xlabel('Group')
     plt.ylabel('Mean Synchrony')
@@ -412,7 +429,7 @@ def aggregate_data(output_dir):
         #Flatten numpy array into a single dimension
         experiment_aggregated_corr_1d = experiment_aggregated_corr.flatten()
         #Create an array of ROI pairs corresponding to flattened array
-        roi_pairs = np.array([['ROI'+str(i), 'ROI'+str(j)] for i in range(experiment_aggregated_corr.shape[0]) for j in range(experiment_aggregated_corr.shape[0])])
+        roi_pairs = np.array([['ROI_'+str(i), 'ROI_'+str(j)] for i in range(experiment_aggregated_corr.shape[0]) for j in range(experiment_aggregated_corr.shape[0])])
         single_experiment_synchrony['experiment_id'] = [experiment_id for _ in range(len(experiment_aggregated_corr_1d))]
         single_experiment_synchrony['ROI_a'] = roi_pairs[:, 0]
         single_experiment_synchrony['ROI_b'] = roi_pairs[:, 1]
