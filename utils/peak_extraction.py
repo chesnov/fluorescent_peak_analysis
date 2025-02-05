@@ -83,7 +83,7 @@ def run_with_timeout(target_function, timeout=300, *args, **kwargs):
             raise  # Re-raise the exception for debugging
 
             
-def load_data(file_path):
+def load_data(file_path, config):
     #Load numpy array from the csv file
     array = np.loadtxt(file_path, delimiter=',')
     #Transpose the array
@@ -102,40 +102,11 @@ def load_data(file_path):
     num_samples = array.shape[0]
 
     #If the recording is longer than 1 minute, remove everything after 1 minute
-    if num_samples > 6000:
-        array = array[:6000, :]
-        df = df.iloc[:6000, :]
+    if num_samples > config['peak_extraction']['peak_finding_end']:
+        array = array[config['peak_extraction']['peak_finding_start']:config['peak_extraction']['peak_finding_end'], :]
+        df = df.iloc[config['peak_extraction']['peak_finding_start']:config['peak_extraction']['peak_finding_end'], :]
 
     return array, df
-
-
-def compute_firing_frequency(peaks, num_samples, sampling_rate):
-    """
-    Compute the firing frequency (peaks per second) based on identified peaks.
-    
-    Parameters:
-    - peaks: array-like, indices of the detected peaks.
-    - num_samples: int, total number of samples in the recording.
-    - sampling_rate: int, number of samples per second (e.g., 100).
-    
-    Returns:
-    - firing_frequency: list, firing frequency (peaks per second) for each second.
-    """
-    # Calculate the total recording time in seconds
-    total_seconds = num_samples // sampling_rate
-    
-    # Initialize a list to hold the firing frequency for each second
-    firing_frequency = []
-    
-    # Loop through each second and count the number of peaks in that interval
-    for sec in range(total_seconds):
-        start_idx = sec * sampling_rate  # Start of the second in samples
-        end_idx = (sec + 1) * sampling_rate  # End of the second in samples
-        peaks_in_second = len([peak for peak in peaks if peak >= start_idx and peak < end_idx])
-        
-        firing_frequency.append(peaks_in_second)
-    
-    return firing_frequency
 
 
 # Define rolling window smoothing function
@@ -146,61 +117,50 @@ def rolling_window_smooth(signal, window_size):
     return smoothed_signal
 
 
-def precise_peak_locs(smoothed_peaks, trace):
+def precise_peak_locs(smoothed_peaks, trace, config):
     heights = []
     peaks = []
     for peak in smoothed_peaks:
         #smoothed peak location might not the actual peak due to smoothing
         #Get the position within original trace corresponding to the largest value in the window
-        true_peak = np.argmax(trace[peak-15:peak+15]) + peak - 15 #Due to smoothing the peak is shifted to the right
+        true_peak = np.argmax(trace[peak - config['peak_extraction']['window_size'] : peak + config['peak_extraction']['window_size'] ]) + peak - config['peak_extraction']['window_size']  #Due to smoothing the peak is shifted to the right
         peaks.append(true_peak)
         absolute_height = trace[true_peak]
         heights.append(absolute_height)
     return peaks, heights
 
 
-def signaltonoise(a, axis=0, ddof=0):
-    a = np.asanyarray(a)
-    m = a.mean(axis)
-    sd = a.std(axis=axis, ddof=ddof)
-    return np.where(sd == 0, 0, m/sd)
-
-def peak_finder(trace):
-    window_size = 15  # To be adjusted if needed
+def peak_finder(trace, config):
+    window_size = config['peak_extraction']['window_size'] 
     smoothed_trace = rolling_window_smooth(trace, window_size)
     #remove the edges
     smoothed_trace = smoothed_trace[window_size:-window_size]
     smoothed_trace = np.pad(smoothed_trace, (window_size, window_size), 'constant', constant_values=(0, 0))
 
-    #calculate 50th percentile
-    percentile = np.percentile(smoothed_trace, 50)
+    #calculate k-th percentile
+    percentile = np.percentile(smoothed_trace, config['peak_extraction']['k_percentile'])
     below_percentile = smoothed_trace[smoothed_trace < percentile]
     below_percentile_std = np.std(below_percentile)
     median_val = np.median(below_percentile)
-    # mad = np.median(np.abs(smoothed_trace - median_val)) * 1.4826
-    height_threshold = median_val + 9 * below_percentile_std
-    prominence_threshold = 8 * below_percentile_std
+    height_threshold = median_val + config['peak_extraction']['num_std_height'] * below_percentile_std
+    prominence_threshold = config['peak_extraction']['num_std_prominence'] * below_percentile_std
 
-    # median_val = np.median(smoothed_trace)
-    # mad = np.median(np.abs(smoothed_trace - median_val)) * 1.4826
-    # height_threshold = median_val + 3 * mad
-    # prominence_threshold = 6 * mad
-    width_threshold = 10 #Empirically determined
+    width_threshold = config['peak_extraction']['width_threshold'] #Empirically determined
     smoothed_peaks, _ = find_peaks(smoothed_trace, height=height_threshold, prominence=prominence_threshold, width=width_threshold)
-    peaks, heights = precise_peak_locs(smoothed_peaks, trace)
+    peaks, heights = precise_peak_locs(smoothed_peaks, trace, config)
     
     return peaks, np.array(heights), height_threshold, smoothed_trace
 
 
-def plot_peaks(roi, trace, smoothed_trace, peaks, peak_heights, height_threshold, data_output_dir):
-    x_arr = np.arange(trace.shape[0]) / 100
+def plot_peaks(roi, trace, smoothed_trace, peaks, height_threshold, data_output_dir, config):
+    x_arr = np.arange(trace.shape[0]) / (config['motion_corr']['fr']/10)
     fig = go.Figure()
     #Set figure size
     fig.update_layout(width=1000, height=600)
     fig.add_trace(go.Scatter(x=x_arr, y=trace, name=roi))
     #check if the 0th peak is a None
     if peaks[0] is not None:
-        fig.add_trace(go.Scatter(x=[p/100 for p in peaks], y=trace[peaks], mode='markers', name='Peaks'))
+        fig.add_trace(go.Scatter(x=[p/(config['motion_corr']['fr']/10) for p in peaks], y=trace[peaks], mode='markers', name='Peaks'))
     fig.add_trace(go.Scatter(x=x_arr, y=smoothed_trace, name='Smoothed Trace'))
     fig.add_hline(y=height_threshold, line_dash='dash', line_color='gray', annotation_text='Threshold', annotation_position='top right')
 
@@ -208,24 +168,11 @@ def plot_peaks(roi, trace, smoothed_trace, peaks, peak_heights, height_threshold
     fig.update_layout(template='plotly_dark')
     fig.update_layout(xaxis_title='Time [s]', yaxis_title='Intensity [dF/F]', plot_bgcolor='black', paper_bgcolor='black', font=dict(color='white'))
     
-
-    #Add peak heights (from properties) next to the peaks
-    # for i, peak in enumerate(peaks):
-    #     fig.add_annotation(x=peak, y=trace[peak], text=f'{peak_heights[i]:.2f}', showarrow=False)
-    
     output_file_root = os.path.join(data_output_dir, roi + '_peaks')
     #Save the plot as html
     fig.write_html(output_file_root + '.html') 
     #Save the plot as pdf
     fig.write_image(output_file_root + '.pdf', format='pdf')
-
-
-# Plot the firing frequency
-def plot_firing_frequency(firing_freq_per_sec):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=np.arange(len(firing_freq_per_sec)), y=firing_freq_per_sec))
-    fig.update_layout(title='Firing Frequency per Second', xaxis_title='Second', yaxis_title='Firing Frequency')
-    fig.show()
 
 
 def peak_to_peak_distance(df, recordings_duration, data_output_dir, experiment_id):
@@ -245,31 +192,13 @@ def peak_to_peak_distance(df, recordings_duration, data_output_dir, experiment_i
     peak_to_peak_dists.to_csv(os.path.join(data_output_dir, experiment_id + '_firing_frequency.csv'), index=False)
 
 
-def calc_noise_levels(array, roi_id):
+def calc_noise_levels(array, roi_id, config):
     #iterating over each roi, calculate the noise level, assuming baseline is at the 5th percentile
     trace = array[:, roi_id]
-    percentile = np.percentile(trace, 50)
+    percentile = np.percentile(trace, config['peak_extraction']['k_percentile'])
     below_percentile = trace[trace < percentile]
     below_percentile_std = np.std(below_percentile)
     return below_percentile_std
-
-
-#plot noise level for each roi
-def plot_noise_level(array):
-    noise_levels = []
-    for roi_id in range(array.shape[1]):
-        noise_levels.append(calc_noise_levels(array, roi_id))
-    #plot a line of best fit
-    line = np.polyfit(np.arange(len(noise_levels)), noise_levels, 1)
-    line_fn = np.poly1d(line)   
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=np.arange(len(noise_levels)), y=noise_levels, mode='markers', name='ROIs'))
-    fig.add_trace(go.Scatter(x=np.arange(len(noise_levels)), y=line_fn(np.arange(len(noise_levels))), name='Line of Best Fit'))
-
-    #Make the plot black
-    fig.update_layout(template='plotly_dark')
-    fig.update_layout(xaxis_title='ROI', yaxis_title='Median Absolute Deviation', plot_bgcolor='black', paper_bgcolor='black', font=dict(color='white'))
-    fig.show()
 
 
 def plot_noise_level_histogram(experiment_df, data_output_dir):
@@ -285,23 +214,6 @@ def plot_noise_level_histogram(experiment_df, data_output_dir):
     fig.write_html(output_file_root + '.html') 
     #Save the plot as pdf
     fig.write_image(output_file_root + '.pdf', format='pdf')
-    
-
-def raw_signal_pearson(array):
-    # Compute the Pearson correlation coefficient between each pair of ROIs
-    corr_matrix = np.corrcoef(array, rowvar=False)
-    # Plot correlation matrix using plotly
-    fig = go.Figure(data=go.Heatmap(z=corr_matrix, colorscale='Viridis'))
-    fig.update_layout(width=800, height=800)
-    #make the plot dark
-    fig.update_layout(template='plotly_dark')
-    fig.update_layout(plot_bgcolor='black', paper_bgcolor='black', font=dict(color='white'))
-    #Add label to heat bar
-    fig.update_layout(coloraxis_colorbar=dict(title='Pearson Correlation'))
-    #Add labels to x and y axis
-    fig.update_xaxes(title_text='ROI ID')
-    fig.update_yaxes(title_text='ROI ID')
-    fig.show()
 
 
 def peak_event_synchrony_per_peak(peaks, window_size=15):
@@ -344,8 +256,7 @@ def peak_event_synchrony_per_peak(peaks, window_size=15):
     return synchrony_matrix
 
 
-
-def synchrony_calculation(df, array, data_output_dir, experiment_id):
+def synchrony_calculation(df, array, data_output_dir, experiment_id, config):
     # N: number of neurons, T: number of time points
     N = array.shape[1]
     T = array.shape[0]
@@ -358,7 +269,7 @@ def synchrony_calculation(df, array, data_output_dir, experiment_id):
         if not pd.isna(row['peak_time']):
             PeakRegions[roi_id, int(row['peak_time'])] = 1
 
-    aggregated_corr = peak_event_synchrony_per_peak(PeakRegions, window_size=15)
+    aggregated_corr = peak_event_synchrony_per_peak(PeakRegions, window_size=config['peak_extraction']['window_size'])
 
     #Identify what value is on the diagonal and scale the matrix to be between 1 and 0 where the largest value is 1
     for i in range(N):
@@ -389,7 +300,7 @@ def synchrony_calculation(df, array, data_output_dir, experiment_id):
     fig.write_image(os.path.join(data_output_dir, experiment_id + '_aggregated_corr.pdf'), format='pdf')
 
 
-def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
+def full_pipeline(experiment_tif, experiment_outdir, yaml_file, config):
     #get the base filename withou txt extension
     experiment_id = os.path.splitext(os.path.basename(experiment_tif))[0]
 
@@ -398,12 +309,12 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
         print(f'{experiment_id} has already been processed')
         return
 
-    settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
-    # with suppress_output():
-    #     try:
-    #         settings_dict = run_with_timeout(raw_data_to_df_f, 300, experiment_tif, yaml_file, experiment_outdir, experiment_id)
-    #     except Exception:
-    #         print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
+    # settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    with suppress_output():
+        try:
+            settings_dict = run_with_timeout(raw_data_to_df_f, config['peak_extraction']['timeout'], experiment_tif, yaml_file, experiment_outdir, experiment_id)
+        except Exception:
+            print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
 
     #Clean up all temp files in caiman temp folder
     if "CAIMAN_DATA" in os.environ: 
@@ -426,7 +337,7 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
     except:
         print(f'No ROIs extracted from {experiment_id}')
         return
-    array, df = load_data(join(experiment_outdir, csv_file))
+    array, df = load_data(join(experiment_outdir, csv_file), config)
 
     roi_ids = list(df.columns)
 
@@ -435,7 +346,7 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
 
     for roi, roi_id in enumerate(roi_ids):
         trace = array[:, roi] #selece just one roi 
-        peaks, peak_heights, height_threshold, smoothed_trace = peak_finder(trace)
+        peaks, peak_heights, height_threshold, smoothed_trace = peak_finder(trace, config)
         if len(peaks) == 0:
             peaks = [None]
             peak_heights = np.array([None])
@@ -447,18 +358,18 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file):
         roi_df['peak_absolute_amplitude'] = peak_heights
 
         experiment_df = pd.concat([experiment_df, roi_df], ignore_index=True)
-        plot_peaks(roi_id, trace, smoothed_trace, peaks, peak_heights, height_threshold, experiment_outdir)
+        plot_peaks(roi_id, trace, smoothed_trace, peaks, height_threshold, experiment_outdir, config)
 
-    experiment_df['noise_level'] = experiment_df['roi_id'].apply(lambda x: calc_noise_levels(array, int(x.rsplit('ROI_')[1])))
+    experiment_df['noise_level'] = experiment_df['roi_id'].apply(lambda x: calc_noise_levels(array, int(x.rsplit('ROI_')[1]), config))
     plot_noise_level_histogram(experiment_df, experiment_outdir)
 
     #Save experiment_df as csv
     experiment_df.to_csv(os.path.join(experiment_outdir, experiment_id + '_experiment_df.csv'), index=False)
 
-    recordings_duration = len(array) / 1000 #in seconds
+    recordings_duration = len(array) / config['motion_corr']['fr'] #in seconds
     peak_to_peak_distance(experiment_df, recordings_duration, experiment_outdir, experiment_id)
 
-    synchrony_calculation(experiment_df, array, experiment_outdir, experiment_id)
+    synchrony_calculation(experiment_df, array, experiment_outdir, experiment_id, config)
 
     settings_dict['status_message'] = 'Full pipeline success'
     save_settings_to_yaml(join(experiment_outdir, experiment_id + "_settings.yaml"), settings_dict)
@@ -471,6 +382,7 @@ def process_dataset(input_dir, output_dir):
 
     #Get the yaml file location
     yaml_file = join(input_dir, [f for f in listdir(input_dir) if f.endswith('.yaml')][0])
+    config = load_yaml_config(yaml_file)
 
     for condition in conditions:
         condition_dir = join(input_dir, condition)
@@ -489,7 +401,7 @@ def process_dataset(input_dir, output_dir):
             if not os.path.exists(experiment_output_dir):
                 os.makedirs(experiment_output_dir)
             #Run the fulll pipeline
-            full_pipeline(join(experiment_dir, tif_file), experiment_output_dir, yaml_file)
+            full_pipeline(join(experiment_dir, tif_file), experiment_output_dir, yaml_file, config)
 
     #Analyse all the processed data
     experiments_amplitude_df, experiments_frequency_df, experimets_synchrony_df = aggregate_data(output_dir)

@@ -49,3 +49,16 @@ src_extr_deconv:
   ssub_B: 1                           # additional downsampling factor in space for background (increase to 2 if slow)
   ring_size_factor: 0.5               # radius of ring is gSiz*ring_size_factor
   del_duplicates: true                # whether to remove duplicates from initialization
+
+
+#Parameters for peak extraction after Caiman
+peak_extraction:
+  timeout: 300                        #A timeout value in seconds for how long to wait for Caiman to finish processing a video
+  peak_finding_start: 0               #Keep frames for peak calling starting from this index 
+  peak_finding_end: 6000              #Keep frames for peak calling ending at this index
+  window_size: 15                     #Window size for smoothing (in frames)
+  k_percentile: 50                    #Percentile of the smoothed ROI trace to use for the background estimation
+  num_std_height: 9                   #Number of standard deviations for height_threshold
+  num_std_prominence: 8               #Number of standard deviations for prominence_threshold
+  width_threshold: 10                #Width threshold for peak calling
+
