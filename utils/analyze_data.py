@@ -58,7 +58,7 @@ def generate_palette(dark_hex: str, n: int) -> list:
     return palette
 
 
-def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
+def plot_peak_amplitudes(experiments_amplitude_df, output_dir, config):
     experiments_amplitude_df = experiments_amplitude_df.copy(deep=True)
     color_options = ['#00312F', '#1D2D46', '#46000D', '#5F3920', '#573844', '#424313']
     groups = list(experiments_amplitude_df['condition'].unique())
@@ -77,8 +77,8 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
     std_noise = experiments_amplitude_df['noise_level'].std()
     #Get a number of unique experiment id and roi pairs before filtering
     num_rois_before_filtering = experiments_amplitude_df.set_index(['experiment_id', 'roi_id']).index.nunique()
-    min_noise_thresh = mean_noise - 0.5 * std_noise
-    max_noise_thresh = mean_noise + 0.5 * std_noise
+    min_noise_thresh = mean_noise - config['peak_extraction']['num_noise_std_thresh'] * std_noise
+    max_noise_thresh = mean_noise + config['peak_extraction']['num_noise_std_thresh'] * std_noise
 
     #Create a dataframe with ROIs that need to be removed due to high noise and associated experiment
     original_conditions = experiments_amplitude_df[['experiment_id', 'roi_id', 'condition']].drop_duplicates()
@@ -86,7 +86,8 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir):
 
     rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh) | (rois_to_remove['noise_level'] < min_noise_thresh)]
     #Remove silent ROIs (no detectable peaks found)
-    rois_to_remove = pd.concat([rois_to_remove, experiments_amplitude_df[experiments_amplitude_df['peak_absolute_amplitude'].isna()]])
+    if not config['peak_extraction']['include_silent_rois']:
+        rois_to_remove = pd.concat([rois_to_remove, experiments_amplitude_df[experiments_amplitude_df['peak_absolute_amplitude'].isna()]])
     rois_to_remove = rois_to_remove[['experiment_id', 'roi_id', 'condition']]
     rois_to_remove = rois_to_remove.drop_duplicates()
     

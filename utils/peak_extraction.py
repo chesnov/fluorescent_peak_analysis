@@ -120,6 +120,7 @@ def rolling_window_smooth(signal, window_size):
 def precise_peak_locs(smoothed_peaks, trace, config):
     heights = []
     peaks = []
+    positive_peaks = config['peak_extraction']['positive_peaks']
     for peak in smoothed_peaks:
         #smoothed peak location might not the actual peak due to smoothing
         #Get the position within original trace corresponding to the largest value in the window
@@ -132,6 +133,11 @@ def precise_peak_locs(smoothed_peaks, trace, config):
 
 def peak_finder(trace, config):
     window_size = config['peak_extraction']['window_size'] 
+    positive_peaks = config['peak_extraction']['positive_peaks']
+
+    if not positive_peaks:
+        trace = np.negative(trace)
+
     smoothed_trace = rolling_window_smooth(trace, window_size)
     #remove the edges
     smoothed_trace = smoothed_trace[window_size:-window_size]
@@ -139,15 +145,21 @@ def peak_finder(trace, config):
 
     #calculate k-th percentile
     percentile = np.percentile(smoothed_trace, config['peak_extraction']['k_percentile'])
-    below_percentile = smoothed_trace[smoothed_trace < percentile]
-    below_percentile_std = np.std(below_percentile)
-    median_val = np.median(below_percentile)
-    height_threshold = median_val + config['peak_extraction']['num_std_height'] * below_percentile_std
-    prominence_threshold = config['peak_extraction']['num_std_prominence'] * below_percentile_std
-
+    nonpeak_percentile = smoothed_trace[smoothed_trace < percentile]
+    nonpeak_percentile_std = np.std(nonpeak_percentile)
+    median_val = np.median(nonpeak_percentile)
+    height_threshold = median_val + config['peak_extraction']['num_std_height'] * nonpeak_percentile_std
+    prominence_threshold = config['peak_extraction']['num_std_prominence'] * nonpeak_percentile_std
     width_threshold = config['peak_extraction']['width_threshold'] #Empirically determined
+
     smoothed_peaks, _ = find_peaks(smoothed_trace, height=height_threshold, prominence=prominence_threshold, width=width_threshold)
-    peaks, heights = precise_peak_locs(smoothed_peaks, trace, config)
+    peaks, heights = precise_peak_locs(smoothed_peaks, trace, config)    
+    
+    if not positive_peaks:
+        heights = np.negative(heights)
+        height_threshold = - height_threshold
+        smoothed_trace = np.negative(smoothed_trace)
+        
     
     return peaks, np.array(heights), height_threshold, smoothed_trace
 
@@ -309,12 +321,12 @@ def full_pipeline(experiment_tif, experiment_outdir, yaml_file, config):
         print(f'{experiment_id} has already been processed')
         return
 
-    # settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
-    with suppress_output():
-        try:
-            settings_dict = run_with_timeout(raw_data_to_df_f, config['peak_extraction']['timeout'], experiment_tif, yaml_file, experiment_outdir, experiment_id)
-        except Exception:
-            print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
+    settings_dict =  raw_data_to_df_f(experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    # with suppress_output():
+    #     try:
+    #         settings_dict = run_with_timeout(raw_data_to_df_f, config['peak_extraction']['timeout'], experiment_tif, yaml_file, experiment_outdir, experiment_id)
+    #     except Exception:
+    #         print(f"The following exception occurred during processing of {experiment_id}: {Exception}")
 
     #Clean up all temp files in caiman temp folder
     if "CAIMAN_DATA" in os.environ: 
@@ -406,6 +418,6 @@ def process_dataset(input_dir, output_dir):
     #Analyse all the processed data
     experiments_amplitude_df, experiments_frequency_df, experimets_synchrony_df = aggregate_data(output_dir)
 
-    rois_to_remove, group_palette, experiment_palette, experiment_avg_peak_amplitudes = plot_peak_amplitudes(experiments_amplitude_df, output_dir)
+    rois_to_remove, group_palette, experiment_palette, experiment_avg_peak_amplitudes = plot_peak_amplitudes(experiments_amplitude_df, output_dir, config)
     experiment_avg_firing_frequency = plot_frequencies(experiments_frequency_df, rois_to_remove, group_palette, experiment_palette, output_dir)
     mean_synchrony_df = plot_synchrony(experimets_synchrony_df, rois_to_remove, group_palette, experiment_palette, output_dir)

@@ -10,13 +10,13 @@ cnmfe_params:
 
 #Parameters used for extracting the ROI contours from the CNMF-E output
 roi_contours:
-  level: 0.4 #A threshold value. Used to dentify and extracts contours from the input image where the data crosses this value.
-  percentage_nonzero: 0.005 #A percentage of the full image this ROI occupies. Used to filter very large ROIs
+  level: 0.1 #A threshold value. Used to dentify and extracts contours from the input image where the data crosses this value.
+  percentage_nonzero: 0.1 #A percentage of the full image this ROI occupies. Used to filter very large ROIs
 
 #Parameters for motion correction
 motion_corr:
-  fr: 1000 #Frame rate of the video
-  decay_time: 0.002 #How quickly (in seconds) the fluorescent indicator peak decays
+  fr: 180 #Frame rate of the video
+  decay_time: 0.04 #How quickly (in seconds) the fluorescent indicator peak decays
   pw_rigid: false #flag for performing piecewise-rigid motion correction (otherwise just rigid)
   max_shifts: 5 #maximum allowed rigid shift
   gSig_filt: 3 #sigma for high pass spatial filter applied before motion correction, used in 1p data
@@ -31,7 +31,7 @@ src_extr_deconv:
   p: 1                                # order of the autoregressive system
   K: null                             # upper bound on number of components per patch, in general None for CNMFE
   gSig: 2                             # expected half-width of neurons in pixels 
-  merge_thr: 0.9                      # merging threshold, max correlation allowed
+  merge_thr: 0.95                      # merging threshold, max correlation allowed
   rf:  40                             # half-size of the patches in pixels. e.g., if rf=40, patches are 80x80
   stride: 20                          # amount of overlap between the patches in pixels 
   only_init: true                     # set it to True to run CNMF-E
@@ -43,11 +43,11 @@ src_extr_deconv:
   nb_patch: 0                         # number of background components (rank) per patch (0 for CNMFE)
   method_deconvolution: oasis         # could use 'cvxpy' alternatively
   min_corr: 0.4                       # min peak value from correlation image
-  min_pnr: 8                          # min peak to noise ration from PNR image
+  min_pnr: 5                          # min peak to noise ration from PNR image
   normalize_init: false               # just leave as is
   center_psf: true                    # True for 1p
   ssub_B: 1                           # additional downsampling factor in space for background (increase to 2 if slow)
-  ring_size_factor: 0.5               # radius of ring is gSiz*ring_size_factor
+  ring_size_factor: 1               # radius of ring is gSiz*ring_size_factor
   del_duplicates: true                # whether to remove duplicates from initialization
 
 
@@ -55,10 +55,13 @@ src_extr_deconv:
 peak_extraction:
   timeout: 300                        #A timeout value in seconds for how long to wait for Caiman to finish processing a video
   peak_finding_start: 0               #Keep frames for peak calling starting from this index 
-  peak_finding_end: 6000              #Keep frames for peak calling ending at this index
+  peak_finding_end: 22000              #Keep frames for peak calling ending at this index
   window_size: 15                     #Window size for smoothing (in frames)
+  positive_peaks: false                # Use true for glutamate and calcium imaging; use false for voltage imaging
   k_percentile: 50                    #Percentile of the smoothed ROI trace to use for the background estimation
-  num_std_height: 9                   #Number of standard deviations for height_threshold
-  num_std_prominence: 8               #Number of standard deviations for prominence_threshold
-  width_threshold: 10                #Width threshold for peak calling
+  num_std_height: 2                   #Number of standard deviations for height_threshold
+  num_std_prominence: 4               #Number of standard deviations for prominence_threshold
+  width_threshold: 6                 #Width threshold for peak calling
+  num_noise_std_thresh: 0.5           #Number of standard deviations of noise to exclude ROIs in analysis
+  include_silent_rois: false          #Use "false" to exclude silent ROIs from analysis (recommended)
 
