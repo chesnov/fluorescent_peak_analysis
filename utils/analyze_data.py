@@ -84,11 +84,19 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir, config):
     original_conditions = experiments_amplitude_df[['experiment_id', 'roi_id', 'condition']].drop_duplicates()
     rois_to_remove = experiments_amplitude_df.copy(deep=True)
 
-    rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh) | (rois_to_remove['noise_level'] < min_noise_thresh)]
+    #The better approach:
+    # rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh) | (rois_to_remove['noise_level'] < min_noise_thresh)]
+
+    #Only do this if you remember that including outlier low noise ROIs artificially inflates frequency!!!!
+    rois_to_remove = rois_to_remove[(rois_to_remove['noise_level'] > max_noise_thresh)]
+
+    rois_to_remove['reason'] = ['outside noise threshold' for i in range(rois_to_remove.shape[0])]
     #Remove silent ROIs (no detectable peaks found)
     if not config['peak_extraction']['include_silent_rois']:
-        rois_to_remove = pd.concat([rois_to_remove, experiments_amplitude_df[experiments_amplitude_df['peak_absolute_amplitude'].isna()]])
-    rois_to_remove = rois_to_remove[['experiment_id', 'roi_id', 'condition']]
+        silent_rois = experiments_amplitude_df[experiments_amplitude_df['peak_absolute_amplitude'].isna()]
+        silent_rois['reason'] = ['silent ROI' for i in range(silent_rois.shape[0])]
+        rois_to_remove = pd.concat([rois_to_remove, silent_rois])
+    rois_to_remove = rois_to_remove[['experiment_id', 'roi_id', 'condition', 'reason']]
     rois_to_remove = rois_to_remove.drop_duplicates()
     
 
@@ -111,7 +119,9 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir, config):
         print(f"Experiments with less than 3 ROIs: {experiments_with_few_rois['experiment_id'].unique()}")
         #If an experiment has less than 3 ROIs, remove it from the dataframe
         #Add these experiments and associated ROIs to rois_to_remove
-        rois_to_remove = pd.concat([rois_to_remove, experiments_with_few_rois[['experiment_id', 'roi_id', 'condition']]], ignore_index=True)
+        remove_few_rois = experiments_with_few_rois[['experiment_id', 'roi_id', 'condition']]
+        remove_few_rois['reason'] = ['Less than 3 ROIs' for i in range(remove_few_rois.shape[0])]
+        rois_to_remove = pd.concat([rois_to_remove, remove_few_rois], ignore_index=True)
         experiments_amplitude_df = experiments_amplitude_df[
             ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
                 rois_to_remove.set_index(['experiment_id', 'roi_id', 'condition']).index
