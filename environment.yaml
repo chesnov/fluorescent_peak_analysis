@@ -3,6 +3,7 @@ channels:
   - bioconda
   - conda-forge
 dependencies:
+  - python=3.11.10
   - caiman
   - pip
   - pip:
@@ -59,4 +60,3 @@ dependencies:
     - wheel~=0.45.1
     - zarr
     - zstandard~=0.23.0
-    - 

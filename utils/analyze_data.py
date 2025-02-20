@@ -120,7 +120,7 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir, config):
         #If an experiment has less than min_num_rois ROIs, remove it from the dataframe
         #Add these experiments and associated ROIs to rois_to_remove
         remove_few_rois = experiments_with_few_rois[['experiment_id', 'roi_id', 'condition']]
-        remove_few_rois['reason'] = [f'Less than {config['peak_extraction']['min_num_rois']} ROIs' for i in range(remove_few_rois.shape[0])]
+        remove_few_rois['reason'] = [f"Less than {config['peak_extraction']['min_num_rois']} ROIs" for i in range(remove_few_rois.shape[0])]
         rois_to_remove = pd.concat([rois_to_remove, remove_few_rois], ignore_index=True)
         experiments_amplitude_df = experiments_amplitude_df[
             ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
