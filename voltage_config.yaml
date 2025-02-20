@@ -64,4 +64,5 @@ peak_extraction:
   width_threshold: 6                 #Width threshold for peak calling
   num_noise_std_thresh: 0.5           #Number of standard deviations of noise to exclude ROIs in analysis
   include_silent_rois: false          #Use "false" to exclude silent ROIs from analysis (recommended)
+  min_num_rois: 3                     #Minimum number of ROIs to include an experiment in the analysis
 

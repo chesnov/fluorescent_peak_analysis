@@ -111,16 +111,16 @@ def plot_peak_amplitudes(experiments_amplitude_df, output_dir, config):
     print(f"Keeping {num_rois_after_filtering} ROIs out of {num_rois_before_filtering}")
     print(f"Noise cutoffs are {min_noise_thresh} and {max_noise_thresh}")
 
-    #For each experiment, check if it still has at least 3 different ROIs
-    experiments_with_enough_rois = experiments_amplitude_df.groupby(['experiment_id', 'condition']).filter(lambda x: x['roi_id'].nunique() >= 3)
-    #Get a list of experiments that have less than 3 ROIs
+    #For each experiment, check if it still has at least min_num_rois different ROIs
+    experiments_with_enough_rois = experiments_amplitude_df.groupby(['experiment_id', 'condition']).filter(lambda x: x['roi_id'].nunique() >= config['peak_extraction']['min_num_rois'])
+    #Get a list of experiments that have less than min_num_rois ROIs
     experiments_with_few_rois = experiments_amplitude_df[~experiments_amplitude_df['experiment_id'].isin(experiments_with_enough_rois['experiment_id'].unique())]
     if len(experiments_with_few_rois) > 0:
-        print(f"Experiments with less than 3 ROIs: {experiments_with_few_rois['experiment_id'].unique()}")
-        #If an experiment has less than 3 ROIs, remove it from the dataframe
+        print(f"Experiments with less than {config['peak_extraction']['min_num_rois']} ROIs: {experiments_with_few_rois['experiment_id'].unique()}")
+        #If an experiment has less than min_num_rois ROIs, remove it from the dataframe
         #Add these experiments and associated ROIs to rois_to_remove
         remove_few_rois = experiments_with_few_rois[['experiment_id', 'roi_id', 'condition']]
-        remove_few_rois['reason'] = ['Less than 3 ROIs' for i in range(remove_few_rois.shape[0])]
+        remove_few_rois['reason'] = [f'Less than {config['peak_extraction']['min_num_rois']} ROIs' for i in range(remove_few_rois.shape[0])]
         rois_to_remove = pd.concat([rois_to_remove, remove_few_rois], ignore_index=True)
         experiments_amplitude_df = experiments_amplitude_df[
             ~experiments_amplitude_df.set_index(['experiment_id', 'roi_id', 'condition']).index.isin(
